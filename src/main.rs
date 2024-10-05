@@ -10,7 +10,7 @@ use iyes_perf_ui::{entries::PerfUiBundle, PerfUiPlugin};
 use tungstenite::{connect, http::Response, stream::MaybeTlsStream, Message, WebSocket};
 
 fn main() {
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
     App::new()
