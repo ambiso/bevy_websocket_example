@@ -6,6 +6,7 @@ use bevy::{
     prelude::*,
     tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task},
 };
+use iyes_perf_ui::{entries::PerfUiBundle, PerfUiPlugin};
 use tungstenite::{connect, http::Response, stream::MaybeTlsStream, Message, WebSocket};
 
 fn main() {
@@ -14,6 +15,10 @@ fn main() {
         .expect("Failed to install rustls crypto provider");
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(PerfUiPlugin)
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::EntityCountDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin)
         .add_plugins(PhysicsPlugins::default())
         .add_systems(Startup, setup_scene)
         .add_systems(Update, check_connection_input)
@@ -48,8 +53,22 @@ fn check_connection_input(
     }
 }
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+enum ConnectionSetupError {
+    #[error("IO")]
+    Io(#[from] std::io::Error),
+    #[error("WebSocket")]
+    WebSocket(#[from] tungstenite::Error),
+}
+
 #[derive(Component)]
-struct WebSocketConnectionSetupTask(#[allow(unused)] Task<CommandQueue>);
+struct WebSocketConnectionSetupTask(
+    #[allow(unused)] Task<Result<CommandQueue, ConnectionSetupError>>,
+);
+
+// mod util;
 
 fn setup_connection(
     mut ev_connect: EventReader<WebSocketConnectionEvents>,
@@ -62,7 +81,14 @@ fn setup_connection(
                 let pool = AsyncComputeTaskPool::get();
                 let entity = commands.spawn_empty().id();
                 let task = pool.spawn(async move {
-                    let client = connect("wss://echo.websocket.org/").unwrap();
+                    let mut client = connect("wss://echo.websocket.org/")?;
+                    match client.0.get_mut() {
+                        MaybeTlsStream::Plain(p) => p.set_nonblocking(true)?,
+                        MaybeTlsStream::Rustls(stream_owned) => {
+                            stream_owned.get_mut().set_nonblocking(true)?
+                        }
+                        _ => todo!(),
+                    };
                     info!("Connected successfully!");
                     let mut command_queue = CommandQueue::default();
 
@@ -74,7 +100,7 @@ fn setup_connection(
                             .remove::<WebSocketConnectionSetupTask>();
                     });
 
-                    command_queue
+                    Ok(command_queue)
                 });
                 commands
                     .entity(entity)
@@ -88,11 +114,21 @@ fn setup_connection(
 /// tasks to see if they're complete. If the task is complete it takes the result, adds a
 /// new [`Mesh3d`] and [`MeshMaterial3d`] to the entity using the result from the task's work, and
 /// removes the task component from the entity.
-fn handle_tasks(mut commands: Commands, mut transform_tasks: Query<&mut WebSocketConnectionSetupTask>) {
+fn handle_tasks(
+    mut commands: Commands,
+    mut transform_tasks: Query<&mut WebSocketConnectionSetupTask>,
+) {
     for mut task in &mut transform_tasks {
-        if let Some(mut commands_queue) = block_on(future::poll_once(&mut task.0)) {
+        if let Some(result) = block_on(future::poll_once(&mut task.0)) {
             // append the returned command queue to have it execute later
-            commands.append(&mut commands_queue);
+            match result {
+                Ok(mut commands_queue) => {
+                    commands.append(&mut commands_queue);
+                }
+                Err(e) => {
+                    info!("Connection failed with: {e:?}");
+                }
+            }
         }
     }
 }
@@ -104,15 +140,22 @@ fn send_info(
     for (mut client,) in entities_with_client.iter_mut() {
         let transforms = &some_data.iter().map(|x| x.0.clone()).collect::<Vec<_>>();
         info!("Sending data: {transforms:?}");
-        client
+        match client
             .0
              .0
             .send(Message::Binary(bincode::serialize(transforms).unwrap()))
-            .unwrap();
+        {
+            Ok(_) => info!("Data successfully sent!"),
+            Err(tungstenite::Error::Io(e)) if e.kind() == ErrorKind::WouldBlock => { /* ignore */ }
+            Err(e) => {
+                warn!("Could not send the message: {e:?}");
+            }
+        }
     }
 }
 
 fn recv_info(mut q: Query<(&mut WebSocketClient,)>) {
+    info!("Checking for new messages...");
     for (mut client,) in q.iter_mut() {
         match client.0 .0.read() {
             Ok(m) => info!("Received message {m:?}"),
@@ -128,7 +171,7 @@ fn setup_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.spawn(());
+    commands.spawn(PerfUiBundle::default());
 
     // circular base
     commands
