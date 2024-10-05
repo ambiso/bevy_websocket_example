@@ -1139,13 +1139,10 @@ dependencies = [
  "avian3d",
  "bevy",
  "bincode",
- "bytes",
  "iyes_perf_ui",
  "rustls",
- "serde",
  "thiserror",
  "tungstenite",
- "webpki-roots",
 ]
 
 [[package]]
