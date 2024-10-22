@@ -237,7 +237,8 @@ fn send_info(
             let msg = bincode::serialize(transforms).unwrap();
             #[cfg(target_arch = "wasm32")]
             {
-                client.0.socket.send_with_u8_array(msg.as_slice()).unwrap();
+                // TODO: do some handling so we know whether the websocket is connected yet
+                let _ = client.0.socket.send_with_u8_array(msg.as_slice()); // ignore the error because the websocket may still be connecting
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
