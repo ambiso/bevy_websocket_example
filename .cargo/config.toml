@@ -6,3 +6,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 # for Windows
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
+
+# for Browser
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
